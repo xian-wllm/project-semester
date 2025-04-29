@@ -1,0 +1,97 @@
+Initialiser modèle courant ← modèle_global sauvegardé
+
+pour chaque batch principal B quotidien :
+
+    # Sauvegarde explicite AVANT traitement du batch
+    modèle_backup ← modèle courant sauvegardé avant tout traitement
+    
+    diviser B en mini-batches {bj}
+
+    pour chaque mini-batch bj :
+
+        envoyer bj à plusieurs clients redondants (ex. 3 clients)
+
+        résultats_clients ← collecter updates clients ayant entraîné à partir de modèle_backup
+
+        si (peak_time()):
+
+            modèle_temporaire ← modèle_backup + aggregation_bj
+
+            Loss_backup ← Loss(modèle_backup)
+            Loss_temporaire ← Loss(modèle_temporaire)
+
+            # Vérification immédiate sur le modèle initial du batch
+            si Loss_temporaire ≤ Loss_backup :
+                # modèle bon, accepter
+                modèle courant ← modèle_temporaire
+
+                pour chaque client c ayant participé :
+                    si update client ≈ aggregation_bj :
+                        augmenter légèrement C_c
+                    sinon :
+                        réduire fortement C_c
+
+            sinon (Rollback immédiat requis):
+                # Revenir immédiatement au modèle avant intégration du batch courant
+                modèle courant ← modèle_backup
+
+                # Vérification individuelle stricte
+                clients_fiables ← liste vide
+
+                pour chaque client c :
+                    modèle_test ← modèle_backup + update_c
+                    Loss_test ← Loss(modèle_test)
+
+                    si Loss_test ≤ Loss_backup :
+                        clients_fiables.ajouter(c)
+                        augmenter légèrement C_c
+                    sinon :
+                        réduire fortement C_c
+
+                # Refaire agrégation uniquement avec clients fiables
+                aggregation_bj ← AggregationRobuste(clients_fiables)
+                modèle courant ← modèle_backup + aggregation_bj
+
+            # Blocage immédiat si confiance trop faible
+            pour chaque client c :
+                si C_c < 0.4 :
+                    bloquer définitivement client c
+
+        sinon (non_peak_time):
+
+            updates_suspects ← liste vide
+            updates_fiables ← liste vide
+
+            # Vérification stricte par loss individuelle sur modèle_backup
+            pour chaque client c :
+                Loss_avant ← Loss(modèle_backup)
+                Loss_après ← Loss(modèle_backup + update_c)
+
+                si Loss_après - Loss_avant > Lmax :
+                    updates_suspects.ajouter(c)
+                    réduire fortement C_c
+                sinon :
+                    updates_fiables.ajouter(update_c)
+
+            # Si une update suspecte existe, élargir redondance immédiatement
+            si taille(updates_suspects) > 0 :
+                envoyer bj à clients alternatifs supplémentaires
+
+                pour chaque update alternative reçue :
+                    Loss_alt ← Loss(modèle_backup + update_alternative)
+
+                    si Loss_alt - Loss_avant ≤ Lmax :
+                        updates_fiables.ajouter(update_alternative)
+
+            # Agréger uniquement updates fiables
+            aggregation_bj ← AggregationRobuste(updates_fiables)
+            modèle courant ← modèle_backup + aggregation_bj
+
+        # Sauvegarder immédiatement modèle courant après traitement mini-batch
+        sauvegarder modèle courant pour prochain mini-batch
+
+    # Fin des mini-batches
+
+    # Mise à jour finale modèle global quotidien
+    modèle_global ← modèle courant
+    sauvegarder modèle_global définitif quotidien
